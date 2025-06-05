@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Split, Item
+from apps.splits.models import Split, Item
 
 admin.site.register(Split)
 admin.site.register(Item)
