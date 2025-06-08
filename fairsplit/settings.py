@@ -18,14 +18,12 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-
 # tell django-environ to read .env
 env = environ.Env()
 env.read_env(os.path.join(BASE_DIR, '.env'))
 
-
-
+# Supabase settings
+SUPABASE_URL = env('SUPABASE_URL')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -36,13 +34,15 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '192.168.1.65']
+
 
 
 # Application definition
 
 INSTALLED_APPS = [
     'apps.splits.apps.SplitsConfig',
+    'apps.users.apps.UsersConfig',
     'rest_framework',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -50,16 +50,18 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
+    # 'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = 'fairsplit.urls'
@@ -143,3 +145,9 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
 }
+
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:19006",  # Expo 기본 포트, 시뮬레이터 IP 등
+#     "http://192.168.x.x:19006", # 실제 IP도 필요할 수 있음
+# ]
+CORS_ALLOW_ALL_ORIGINS = True

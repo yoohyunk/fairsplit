@@ -1,8 +1,8 @@
 from django.http import HttpResponse
 from django.shortcuts import render
 from rest_framework.decorators import api_view
-from splits.models import Split, Item
-from .serializers import SplitSerializer, ItemSerializer
+from apps.splits.models import Split, Item
+from apps.splits.serializers import SplitSerializer, ItemSerializer
 from rest_framework import viewsets
 
 # Create your views here.
