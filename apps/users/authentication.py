@@ -1,20 +1,20 @@
-import requests
-from jose import jwt
 from rest_framework import authentication, exceptions
 import os
 import environ
 from pathlib import Path
+import logging
+from supabase import create_client, Client
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+logger = logging.getLogger(__name__)
 
-# tell django-environ to read .env
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 env = environ.Env()
 env.read_env(os.path.join(BASE_DIR, '.env'))
 
-
 SUPABASE_URL = env('SUPABASE_URL')
-JWKS_URL = f"{SUPABASE_URL}/.well-known/jwks.json"
+SUPABASE_KEY = env('SUPABASE_ANON_KEY')
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 class SupabaseAuthentication(authentication.BaseAuthentication):
     def authenticate(self, request):
@@ -24,42 +24,32 @@ class SupabaseAuthentication(authentication.BaseAuthentication):
         
         token = auth_header.split(' ')[1]
         
-        jwks = requests.get(JWKS_URL).json()
-        unverified_header = jwt.get_unverified_header(token)
-        
-        rsa_key = {}
-        for key in jwks['keys']:
-            if key['kid'] == unverified_header['kid']:
-                rsa_key = {
-                    'kty': key['kty'],
-                    'kid': key['kid'],
-                    'use': key['use'],
-                    'n': key['n'],
-                    'e': key['e']
-                }
-        if not rsa_key:
-            raise exceptions.AuthenticationFailed('Unable to find appropriate key')
-        
         try:
-            payload = jwt.decode(
-                token,
-                rsa_key,
-                algorithms=['RS256'],
-                audience='authenticated',
-                issuer=f'{SUPABASE_URL}/auth/v1'
+            # Supabase 클라이언트를 사용하여 토큰 검증
+            user = supabase.auth.get_user(token)
+            
+            from django.contrib.auth.models import User
+            from .models import Profile
+            
+            django_user, created = User.objects.get_or_create(
+                username=user.user.id,
+                defaults={
+                    'email': user.user.email,
+                    'first_name': user.user.user_metadata.get('full_name', ''),
+                }
             )
-        except jwt.ExpiredSignatureError:
-            raise exceptions.AuthenticationFailed('Token expired')
-        except jwt.JWTClaimsError:
-            raise exceptions.AuthenticationFailed('Invalid token claims')
-        except Exception:
-            raise exceptions.AuthenticationFailed('Token decode failed')
-        
-        user_id = payload.get('sub')
-        if not user_id:
-            raise exceptions.AuthenticationFailed('Invalid token payload')
-
-        from django.contrib.auth.models import User
-        user, created = User.objects.get_or_create(username=user_id)
-        
-        return (user, None)
+            
+            # Profile이 없으면 생성
+            if not hasattr(django_user, 'profile'):
+                Profile.objects.create(
+                    user=django_user,
+                    username=user.user.user_metadata.get('username', user.user.email),
+                    bio=user.user.user_metadata.get('bio', ''),
+                    avatar_url=user.user.user_metadata.get('avatar_url', '')
+                )
+            
+            return (django_user, None)
+            
+        except Exception as e:
+            logger.error(f"Authentication failed: {str(e)}")
+            raise exceptions.AuthenticationFailed('Invalid token')
