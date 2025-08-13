@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from apps.scan.views import ScanViewSet
 from apps.splits.views import SplitViewSet, ItemViewSet
 from apps.users.views import ProfileViewSet
 from rest_framework.routers import DefaultRouter
@@ -25,6 +26,7 @@ router = DefaultRouter()
 router.register(r'splits', SplitViewSet)
 router.register(r'items', ItemViewSet)
 router.register(r'profiles', ProfileViewSet, basename='profile')
+router.register(r'scan', ScanViewSet, basename='scan')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

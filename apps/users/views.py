@@ -6,15 +6,18 @@ from .serializers import ProfileSerializer
 class ProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
-
+    
     def get_queryset(self):
         user = self.request.user
         if user.is_authenticated:
             return Profile.objects.filter(user=user)
-        return Profile.objects.none()
+            return Profile.objects.none() 
 
     def get_object(self):
-        return Profile.objects.get(user=self.request.user)
+        try:
+            return Profile.objects.get(user=self.request.user)
+        except Profile.DoesNotExist:
+            return None
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
