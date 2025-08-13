@@ -45,6 +45,23 @@ class SplitParticipant(models.Model):
         return f"{self.email} in {self.split.name}"
 
 
+class ItemAssignment(models.Model):
+    """
+    스플릿의 아이템들을 참여자들에게 할당하는 모델
+    """
+    split = models.ForeignKey(Split, on_delete=models.CASCADE, related_name='assignments')
+    receipt_item = models.ForeignKey('scan.ReceiptItem', on_delete=models.CASCADE, related_name='assignments')
+    participants = models.ManyToManyField(SplitParticipant, related_name='assigned_items')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['split', 'receipt_item']
+    
+    def __str__(self):
+        participant_names = ', '.join([p.email for p in self.participants.all()])
+        return f"{self.receipt_item.name} -> {participant_names}"
+
+
 class Item(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField()

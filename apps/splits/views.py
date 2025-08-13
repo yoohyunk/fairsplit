@@ -3,8 +3,8 @@ from django.shortcuts import render
 from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from rest_framework import status
-from apps.splits.models import Split, Item, SplitParticipant
-from apps.splits.serializers import SplitSerializer, ItemSerializer, SplitParticipantSerializer
+from apps.splits.models import Split, Item, SplitParticipant, ItemAssignment
+from apps.splits.serializers import SplitSerializer, ItemSerializer, SplitParticipantSerializer, ItemAssignmentSerializer
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
@@ -165,6 +165,174 @@ class SplitViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': 'You are not a participant in this split'}, 
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['get'])
+    def receipt_items(self, request, pk=None):
+        """
+        스플릿에 연결된 영수증의 아이템들을 조회합니다.
+        """
+        split = self.get_object()
+        
+        if not split.receipt:
+            return Response(
+                {'error': 'No receipt linked to this split'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            from apps.scan.models import ReceiptItem
+            items = ReceiptItem.objects.filter(receipt=split.receipt)
+            
+            # 할당 정보와 함께 반환
+            items_data = []
+            for item in items:
+                item_data = {
+                    'id': item.id,
+                    'name': item.name,
+                    'quantity': item.quantity,
+                    'unit_price': item.unit_price,
+                    'total_price_with_discount': item.total_price_with_discount,
+                    'total_price_without_discount': item.total_price_without_discount,
+                    'category': item.category,
+                    'assigned_participants': []
+                }
+                
+                # 할당된 참여자들 확인
+                assignment = ItemAssignment.objects.filter(
+                    split=split,
+                    receipt_item=item
+                ).first()
+                
+                if assignment:
+                    item_data['assigned_participants'] = [
+                        p.email for p in assignment.participants.all()
+                    ]
+                
+                items_data.append(item_data)
+            
+            return Response({
+                'receipt_id': split.receipt.id,
+                'store_name': split.receipt.store_name,
+                'total': split.receipt.total,
+                'currency': split.receipt.currency,
+                'items': items_data
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch receipt items: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def assign_items(self, request, pk=None):
+        """
+        아이템들을 참여자들에게 할당합니다.
+        """
+        split = self.get_object()
+        assignments_data = request.data.get('assignments', [])
+        
+        if not assignments_data:
+            return Response(
+                {'error': 'assignments field is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        created_assignments = []
+        errors = []
+        
+        for assignment_data in assignments_data:
+            receipt_item_id = assignment_data.get('receipt_item_id')
+            participant_emails = assignment_data.get('participant_emails', [])
+            
+            if not receipt_item_id or not participant_emails:
+                errors.append('receipt_item_id and participant_emails are required')
+                continue
+            
+            try:
+                # ReceiptItem 확인
+                from apps.scan.models import ReceiptItem
+                receipt_item = ReceiptItem.objects.get(id=receipt_item_id)
+                
+                # 기존 할당이 있으면 업데이트, 없으면 생성
+                assignment, created = ItemAssignment.objects.get_or_create(
+                    split=split,
+                    receipt_item=receipt_item
+                )
+                
+                # 참여자들 추가
+                participants = SplitParticipant.objects.filter(
+                    split=split,
+                    email__in=participant_emails
+                )
+                
+                if not participants.exists():
+                    errors.append(f'No valid participants found for item {receipt_item.name}')
+                    continue
+                
+                assignment.participants.set(participants)
+                assignment.save()
+                
+                created_assignments.append(ItemAssignmentSerializer(assignment).data)
+                
+            except ReceiptItem.DoesNotExist:
+                errors.append(f'ReceiptItem {receipt_item_id} not found')
+            except Exception as e:
+                errors.append(f'Failed to assign item {receipt_item_id}: {str(e)}')
+        
+        return Response({
+            'assignments': created_assignments,
+            'errors': errors,
+            'message': f'Successfully created/updated {len(created_assignments)} assignments'
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'])
+    def assignments(self, request, pk=None):
+        """
+        스플릿의 아이템 할당 정보를 조회합니다.
+        """
+        split = self.get_object()
+        assignments = split.assignments.all()
+        serializer = ItemAssignmentSerializer(assignments, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['put'])
+    def update_assignment(self, request, pk=None):
+        """
+        특정 아이템의 할당을 업데이트합니다.
+        """
+        split = self.get_object()
+        receipt_item_id = request.data.get('receipt_item_id')
+        participant_emails = request.data.get('participant_emails', [])
+        
+        if not receipt_item_id:
+            return Response(
+                {'error': 'receipt_item_id is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            assignment = ItemAssignment.objects.get(
+                split=split,
+                receipt_item_id=receipt_item_id
+            )
+            
+            # 참여자들 업데이트
+            participants = SplitParticipant.objects.filter(
+                split=split,
+                email__in=participant_emails
+            )
+            
+            assignment.participants.set(participants)
+            assignment.save()
+            
+            return Response(ItemAssignmentSerializer(assignment).data)
+            
+        except ItemAssignment.DoesNotExist:
+            return Response(
+                {'error': 'Assignment not found'}, 
+                status=status.HTTP_404_NOT_FOUND
             )
 
 class ItemViewSet(viewsets.ModelViewSet):
