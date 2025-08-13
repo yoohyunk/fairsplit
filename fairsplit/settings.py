@@ -43,6 +43,7 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '192.168.1.65']
 INSTALLED_APPS = [
     'apps.splits.apps.SplitsConfig',
     'apps.users.apps.UsersConfig',
+    'apps.scan.apps.ScanConfig',
     'rest_framework',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -92,6 +93,7 @@ DATABASES = {
         default=env('DATABASE_URL'),
         conn_max_age=600,
         conn_health_checks=True,
+        ssl_require=True,
     )
 }
 

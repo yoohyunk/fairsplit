@@ -1,12 +1,15 @@
 from django.db import models
+from apps.users.models import User
 
 # Create your models here.
 
 
 class Split(models.Model):
-    name = models.CharField(max_length=100)
-    description = models.TextField()
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
     date_created = models.DateTimeField(auto_now_add=True)
+    image = models.ImageField(upload_to='splits/', null=True, blank=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='splits')
     
     def __str__(self):
         return self.name
