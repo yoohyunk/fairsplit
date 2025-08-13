@@ -53,6 +53,8 @@ class ScanViewSet(viewsets.ModelViewSet):
         영수증 이미지 URL을 받아 파싱하고 저장합니다.
         """
         image_url = request.data.get('image_url')
+        split_id = request.data.get('split_id')  # New field for linking to split
+        
         if not image_url:
             return Response(
                 {'error': 'image_url is required'}, 
@@ -109,6 +111,17 @@ class ScanViewSet(viewsets.ModelViewSet):
                     total=tax_item.get('total', 0),
                     tax_included=tax_item.get('tax_included', False)
                 )
+
+            # If split_id is provided, link the receipt to the split
+            if split_id:
+                try:
+                    from apps.splits.models import Split
+                    split = Split.objects.get(id=split_id, user=request.user)
+                    split.receipt = receipt
+                    split.currency = receipt.currency
+                    split.save()
+                except Split.DoesNotExist:
+                    pass  # Split not found, continue without linking
 
             return Response(ReceiptImageSerializer(receipt).data, status=status.HTTP_201_CREATED)
 
