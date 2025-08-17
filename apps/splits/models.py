@@ -22,6 +22,7 @@ class Split(models.Model):
     receipt = models.ForeignKey('scan.ReceiptImage', on_delete=models.SET_NULL, null=True, blank=True, related_name='splits')
     currency = models.CharField(max_length=10, default='USD')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    finalization_date = models.DateTimeField(null=True, blank=True)
     
     def __str__(self):
         return self.name

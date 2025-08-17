@@ -168,6 +168,210 @@ class SplitViewSet(viewsets.ModelViewSet):
             )
 
     @action(detail=True, methods=['get'])
+    def calculate(self, request, pk=None):
+        """
+        스플릿의 개인별 비용을 계산합니다.
+        """
+        split = self.get_object()
+        
+        try:
+            # 참여자별 비용 계산
+            participant_costs = {}
+            
+            # 모든 참여자 초기화
+            for participant in split.participants.all():
+                participant_costs[participant.email] = {
+                    'email': participant.email,
+                    'total_cost': 0,
+                    'items': [],
+                    'agreed': participant.agreed
+                }
+            
+            # 아이템 할당에 따른 비용 분배
+            total_items_with_discount = 0
+            total_items_without_discount = 0
+            
+            for assignment in split.assignments.all():
+                receipt_item = assignment.receipt_item
+                # 할인이 적용된 가격 사용 (total_discount는 별도 처리하지 않음)
+                item_cost = float(receipt_item.total_price_with_discount)
+                participant_count = assignment.participants.count()
+                
+                # 할인 계산을 위한 원가와 할인가 합계 추적
+                total_items_with_discount += item_cost
+                total_items_without_discount += float(receipt_item.total_price_without_discount)
+                
+                if participant_count > 0:
+                    cost_per_person = item_cost / participant_count
+                    
+                    for participant in assignment.participants.all():
+                        participant_costs[participant.email]['total_cost'] += cost_per_person
+                        participant_costs[participant.email]['items'].append({
+                            'item_id': receipt_item.id,
+                            'item_name': receipt_item.name,
+                            'cost': cost_per_person,
+                            'quantity': receipt_item.quantity
+                        })
+            
+            # 추가 할인 분배 (total_discount가 개별 아이템 할인의 합보다 클 경우만)
+            if split.receipt and split.receipt.total_discount > 0:
+                total_receipt_discount = float(split.receipt.total_discount)
+                calculated_item_discount = total_items_without_discount - total_items_with_discount
+                
+                # 영수증의 total_discount가 개별 아이템 할인 합계보다 클 경우에만 추가 할인 적용
+                additional_discount = total_receipt_discount - calculated_item_discount
+                
+                if additional_discount > 0 and total_items_with_discount > 0:
+                    for email in participant_costs:
+                        if participant_costs[email]['total_cost'] > 0:
+                            discount_ratio = participant_costs[email]['total_cost'] / total_items_with_discount
+                            discount_amount = additional_discount * discount_ratio
+                            participant_costs[email]['total_cost'] -= discount_amount
+                            
+                            # 추가 할인을 별도 아이템으로 추가
+                            participant_costs[email]['items'].append({
+                                'item_id': 'additional_discount',
+                                'item_name': 'Additional Discount',
+                                'cost': -discount_amount,
+                                'quantity': 1
+                            })
+            
+            # 세금 분배 (전체 세금을 비용 비율에 따라 분배)
+            if split.receipt and split.receipt.tax > 0:
+                total_assigned_cost = sum(p['total_cost'] for p in participant_costs.values())
+                total_tax = float(split.receipt.tax)
+                
+                if total_assigned_cost > 0:
+                    for email in participant_costs:
+                        tax_ratio = participant_costs[email]['total_cost'] / total_assigned_cost
+                        tax_amount = total_tax * tax_ratio
+                        participant_costs[email]['total_cost'] += tax_amount
+                        
+                        # 세금을 별도 아이템으로 추가
+                        participant_costs[email]['items'].append({
+                            'item_id': 'tax',
+                            'item_name': 'Tax',
+                            'cost': tax_amount,
+                            'quantity': 1
+                        })
+            
+            # 팁 분배 (전체 팁을 참여자 수로 균등 분배)
+            if split.receipt and split.receipt.tips > 0:
+                total_tips = float(split.receipt.tips)
+                participant_count = split.participants.count()
+                
+                if participant_count > 0:
+                    tip_per_person = total_tips / participant_count
+                    
+                    for email in participant_costs:
+                        participant_costs[email]['total_cost'] += tip_per_person
+                        participant_costs[email]['items'].append({
+                            'item_id': 'tip',
+                            'item_name': 'Tip',
+                            'cost': tip_per_person,
+                            'quantity': 1
+                        })
+            
+            # 소수점 둘째 자리까지 반올림
+            for email in participant_costs:
+                participant_costs[email]['total_cost'] = round(participant_costs[email]['total_cost'], 2)
+                for item in participant_costs[email]['items']:
+                    item['cost'] = round(item['cost'], 2)
+            
+            # 전체 요약 정보
+            summary = {
+                'split_id': split.id,
+                'split_name': split.name,
+                'currency': split.currency,
+                'total_amount': float(split.receipt.total) if split.receipt else 0,
+                'total_discount': float(split.receipt.total_discount) if split.receipt else 0,
+                'total_tax': float(split.receipt.tax) if split.receipt else 0,
+                'total_tips': float(split.receipt.tips) if split.receipt else 0,
+                'participant_count': split.participants.count(),
+                'agreed_count': split.participants.filter(agreed=True).count()
+            }
+            
+            return Response({
+                'summary': summary,
+                'participant_costs': list(participant_costs.values())
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to calculate split: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def finalize(self, request, pk=None):
+        """
+        스플릿을 최종 확정합니다.
+        """
+        split = self.get_object()
+        
+        # 모든 참여자가 동의했는지 확인
+        total_participants = split.participants.count()
+        agreed_participants = split.participants.filter(agreed=True).count()
+        
+        if agreed_participants < total_participants:
+            return Response(
+                {'error': f'Not all participants have agreed. {agreed_participants}/{total_participants} agreed'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 스플릿 상태를 finalized로 변경하고 확정 시간 설정
+        split.status = 'finalized'
+        split.finalization_date = timezone.now()
+        split.save()
+        
+        return Response({
+            'message': 'Split finalized successfully',
+            'split_id': split.id,
+            'status': split.status,
+            'finalization_date': split.finalization_date
+        })
+
+    @action(detail=True, methods=['get'])
+    def summary(self, request, pk=None):
+        """
+        스플릿의 요약 정보를 조회합니다.
+        """
+        split = self.get_object()
+        
+        try:
+            # 기본 정보
+            summary_data = {
+                'id': split.id,
+                'name': split.name,
+                'description': split.description,
+                'status': split.status,
+                'currency': split.currency,
+                'date_created': split.date_created,
+                'participant_count': split.participants.count(),
+                'agreed_count': split.participants.filter(agreed=True).count(),
+                'assignment_count': split.assignments.count()
+            }
+            
+            # 영수증 정보가 있는 경우
+            if split.receipt:
+                summary_data.update({
+                    'receipt_id': split.receipt.id,
+                    'store_name': split.receipt.store_name,
+                    'total_amount': float(split.receipt.total),
+                    'total_discount': float(split.receipt.total_discount),
+                    'total_tax': float(split.receipt.tax),
+                    'total_tips': float(split.receipt.tips)
+                })
+            
+            return Response(summary_data)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get split summary: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'])
     def receipt_items(self, request, pk=None):
         """
         스플릿에 연결된 영수증의 아이템들을 조회합니다.

@@ -23,8 +23,8 @@ class SplitSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Split
-        fields = ['id', 'name', 'description', 'date_created', 'receipt', 'currency', 'status', 'participants', 'assignments']
-        read_only_fields = ['date_created', 'participants', 'assignments']
+        fields = ['id', 'name', 'description', 'date_created', 'receipt', 'currency', 'status', 'finalization_date', 'participants', 'assignments']
+        read_only_fields = ['date_created', 'participants', 'assignments', 'finalization_date']
 
 class ItemSerializer(serializers.ModelSerializer):
     class Meta:

@@ -3,10 +3,10 @@ from .models import Split, Item, SplitParticipant, ItemAssignment
 
 @admin.register(Split)
 class SplitAdmin(admin.ModelAdmin):
-    list_display = ['name', 'user', 'status', 'currency', 'date_created']
-    list_filter = ['status', 'currency', 'date_created']
+    list_display = ['name', 'user', 'status', 'currency', 'date_created', 'finalization_date']
+    list_filter = ['status', 'currency', 'date_created', 'finalization_date']
     search_fields = ['name', 'description', 'user__email']
-    readonly_fields = ['date_created']
+    readonly_fields = ['date_created', 'finalization_date']
 
 @admin.register(SplitParticipant)
 class SplitParticipantAdmin(admin.ModelAdmin):
