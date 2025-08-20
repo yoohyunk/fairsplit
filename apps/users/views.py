@@ -25,7 +25,7 @@ class ProfileViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            print("Serializer errors:", serializer.errors)  # 서버 로그에 출력
+            print("Serializer errors:", serializer.errors)  # Output to server log
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)

@@ -11,16 +11,16 @@ User = get_user_model()
 # Create your models here.
 
 class ReceiptImage(models.Model):
-    image = models.URLField(max_length=1000)  # 이미지 URL만 저장
+    image = models.URLField(max_length=1000)  # Store only image URL
     store_name = models.CharField(max_length=255, blank=True)
     country = models.CharField(max_length=255, default='unknown')
     receipt_type = models.CharField(max_length=255, default='unknown')
     address = models.CharField(max_length=1000, blank=True)
     datetime = models.DateTimeField(default=timezone.now)
     currency = models.CharField(max_length=10, default='USD')
-    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # sub_total_amount를 저장
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Store sub_total_amount
     tax = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # total_price를 저장
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)  # Store total_price
     total_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     all_items_price_with_tax = models.BooleanField(default=False)
     payment_method = models.CharField(max_length=255, default='unknown')

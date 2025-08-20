@@ -31,7 +31,7 @@ class ScanViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # 영수증 이미지 파싱
+            # Parse receipt image
             parsed_data = parse_receipt_text(image_url)
             
             # Return parsed data without saving to database
@@ -50,7 +50,7 @@ class ScanViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def scan(self, request):
         """
-        영수증 이미지 URL을 받아 파싱하고 저장합니다.
+        Receive receipt image URL, parse it, and save to database.
         """
         image_url = request.data.get('image_url')
         split_id = request.data.get('split_id')  # New field for linking to split
@@ -62,10 +62,10 @@ class ScanViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # 영수증 이미지 파싱
+            # Parse receipt image
             parsed_data = parse_receipt_text(image_url)
             
-            # ReceiptImage 생성
+            # Create ReceiptImage
             receipt = ReceiptImage.objects.create(
                 image=image_url,
                 store_name=parsed_data.get('store_name', ''),
@@ -85,7 +85,7 @@ class ScanViewSet(viewsets.ModelViewSet):
                 tips=parsed_data.get('tips', 0)
             )
 
-            # ReceiptItem 생성
+            # Create ReceiptItem
             for item_data in parsed_data.get('items', []):
                 ReceiptItem.objects.create(
                     receipt=receipt,
@@ -100,7 +100,7 @@ class ScanViewSet(viewsets.ModelViewSet):
                     item_price_with_tax=item_data.get('item_price_with_tax', False)
                 )
 
-            # TaxItem 생성
+            # Create TaxItem
             for tax_item in parsed_data.get('taxs_items', []):
                 TaxItem.objects.create(
                     receipt=receipt,

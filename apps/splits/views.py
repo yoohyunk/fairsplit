@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from rest_framework import status
 from apps.splits.models import Split, Item, SplitParticipant, ItemAssignment
-from apps.splits.serializers import SplitSerializer, ItemSerializer, SplitParticipantSerializer, ItemAssignmentSerializer
+from apps.splits.serializers import SplitSerializer, SplitListSerializer, ItemSerializer, SplitParticipantSerializer, ItemAssignmentSerializer
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
@@ -24,6 +24,36 @@ class SplitViewSet(viewsets.ModelViewSet):
     queryset = Split.objects.all()
     serializer_class = SplitSerializer
     permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        """Use lightweight serializer for list view"""
+        if self.action == 'list':
+            return SplitListSerializer
+        return SplitSerializer
+
+    def get_queryset(self):
+        """Filter splits by current user and optional status with optimized queries"""
+        from django.db.models import Count
+        
+        queryset = Split.objects.filter(user=self.request.user)\
+            .select_related('receipt')\
+            .annotate(participant_count=Count('participants'))\
+            .order_by('-date_created')
+        
+        # For list view, don't load participants at all
+        if self.action == 'list':
+            queryset = queryset.only(
+                'id', 'name', 'description', 'date_created', 
+                'currency', 'status', 'receipt__id', 
+                'receipt__store_name', 'receipt__total', 'receipt__subtotal'
+            )
+        
+        # Filter by status if provided
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter and status_filter != 'all':
+            queryset = queryset.filter(status=status_filter)
+        
+        return queryset
 
     def perform_create(self, serializer):
         # Set user and handle receipt and currency
@@ -56,7 +86,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def add_participants(self, request, pk=None):
         """
-        스플릿에 참여자들을 추가합니다.
+        Add participants to a split.
         """
         split = self.get_object()
         emails = request.data.get('emails', [])
@@ -76,13 +106,13 @@ class SplitViewSet(viewsets.ModelViewSet):
                 
             email = email.strip().lower()
             
-            # 이미 참여자인지 확인
+            # Check if already a participant
             if SplitParticipant.objects.filter(split=split, email=email).exists():
                 errors.append(f'{email} is already a participant')
                 continue
             
             try:
-                # User 모델에서 해당 이메일을 가진 사용자 찾기
+                # Find user with this email in User model
                 from apps.users.models import User
                 user = User.objects.filter(email=email).first()
                 
@@ -105,7 +135,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def participants(self, request, pk=None):
         """
-        스플릿의 참여자 목록을 조회합니다.
+        Get the list of participants in a split.
         """
         split = self.get_object()
         participants = split.participants.all()
@@ -115,7 +145,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['delete'])
     def remove_participant(self, request, pk=None):
         """
-        스플릿에서 참여자를 제거합니다.
+        Remove a participant from a split.
         """
         split = self.get_object()
         email = request.data.get('email')
@@ -129,7 +159,7 @@ class SplitViewSet(viewsets.ModelViewSet):
         try:
             participant = SplitParticipant.objects.get(split=split, email=email)
             
-            # 스플릿 생성자는 제거할 수 없음
+            # Split creator cannot be removed
             if participant.email == split.user.email:
                 return Response(
                     {'error': 'Cannot remove split creator'}, 
@@ -148,7 +178,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def agree(self, request, pk=None):
         """
-        현재 사용자가 스플릿에 동의합니다.
+        Current user agrees to the split.
         """
         split = self.get_object()
         email = request.user.email
@@ -170,15 +200,15 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def calculate(self, request, pk=None):
         """
-        스플릿의 개인별 비용을 계산합니다.
+        Calculate individual costs for a split.
         """
         split = self.get_object()
         
         try:
-            # 참여자별 비용 계산
+            # Calculate costs per participant
             participant_costs = {}
             
-            # 모든 참여자 초기화
+            # Initialize all participants
             for participant in split.participants.all():
                 participant_costs[participant.email] = {
                     'email': participant.email,
@@ -187,17 +217,17 @@ class SplitViewSet(viewsets.ModelViewSet):
                     'agreed': participant.agreed
                 }
             
-            # 아이템 할당에 따른 비용 분배
+            # Cost distribution based on item assignments
             total_items_with_discount = 0
             total_items_without_discount = 0
             
             for assignment in split.assignments.all():
                 receipt_item = assignment.receipt_item
-                # 할인이 적용된 가격 사용 (total_discount는 별도 처리하지 않음)
+                # Use price with discount applied (total_discount is handled separately)
                 item_cost = float(receipt_item.total_price_with_discount)
                 participant_count = assignment.participants.count()
                 
-                # 할인 계산을 위한 원가와 할인가 합계 추적
+                # Track total cost with and without discount for discount calculation
                 total_items_with_discount += item_cost
                 total_items_without_discount += float(receipt_item.total_price_without_discount)
                 
@@ -213,12 +243,12 @@ class SplitViewSet(viewsets.ModelViewSet):
                             'quantity': receipt_item.quantity
                         })
             
-            # 추가 할인 분배 (total_discount가 개별 아이템 할인의 합보다 클 경우만)
+            # Additional discount distribution (only if total_discount is greater than sum of individual item discounts)
             if split.receipt and split.receipt.total_discount > 0:
                 total_receipt_discount = float(split.receipt.total_discount)
                 calculated_item_discount = total_items_without_discount - total_items_with_discount
                 
-                # 영수증의 total_discount가 개별 아이템 할인 합계보다 클 경우에만 추가 할인 적용
+                # Apply additional discount only if receipt total_discount is greater than calculated item discount sum
                 additional_discount = total_receipt_discount - calculated_item_discount
                 
                 if additional_discount > 0 and total_items_with_discount > 0:
@@ -228,7 +258,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                             discount_amount = additional_discount * discount_ratio
                             participant_costs[email]['total_cost'] -= discount_amount
                             
-                            # 추가 할인을 별도 아이템으로 추가
+                            # Add additional discount as separate item
                             participant_costs[email]['items'].append({
                                 'item_id': 'additional_discount',
                                 'item_name': 'Additional Discount',
@@ -236,7 +266,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                                 'quantity': 1
                             })
             
-            # 세금 분배 (전체 세금을 비용 비율에 따라 분배)
+            # Tax distribution (distribute total tax based on cost ratio)
             if split.receipt and split.receipt.tax > 0:
                 total_assigned_cost = sum(p['total_cost'] for p in participant_costs.values())
                 total_tax = float(split.receipt.tax)
@@ -247,7 +277,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                         tax_amount = total_tax * tax_ratio
                         participant_costs[email]['total_cost'] += tax_amount
                         
-                        # 세금을 별도 아이템으로 추가
+                        # Add tax as separate item
                         participant_costs[email]['items'].append({
                             'item_id': 'tax',
                             'item_name': 'Tax',
@@ -255,7 +285,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                             'quantity': 1
                         })
             
-            # 팁 분배 (전체 팁을 참여자 수로 균등 분배)
+            # Tip distribution (distribute total tips equally among participants)
             if split.receipt and split.receipt.tips > 0:
                 total_tips = float(split.receipt.tips)
                 participant_count = split.participants.count()
@@ -272,13 +302,13 @@ class SplitViewSet(viewsets.ModelViewSet):
                             'quantity': 1
                         })
             
-            # 소수점 둘째 자리까지 반올림
+            # Round to 2 decimal places
             for email in participant_costs:
                 participant_costs[email]['total_cost'] = round(participant_costs[email]['total_cost'], 2)
                 for item in participant_costs[email]['items']:
                     item['cost'] = round(item['cost'], 2)
             
-            # 전체 요약 정보
+            # Overall summary information
             summary = {
                 'split_id': split.id,
                 'split_name': split.name,
@@ -305,11 +335,11 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def finalize(self, request, pk=None):
         """
-        스플릿을 최종 확정합니다.
+        Finalize the split.
         """
         split = self.get_object()
         
-        # 모든 참여자가 동의했는지 확인
+        # Check if all participants have agreed
         total_participants = split.participants.count()
         agreed_participants = split.participants.filter(agreed=True).count()
         
@@ -319,7 +349,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # 스플릿 상태를 finalized로 변경하고 확정 시간 설정
+        # Change split status to finalized and set finalization time
         split.status = 'finalized'
         split.finalization_date = timezone.now()
         split.save()
@@ -334,12 +364,12 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def summary(self, request, pk=None):
         """
-        스플릿의 요약 정보를 조회합니다.
+        Get summary information for a split.
         """
         split = self.get_object()
         
         try:
-            # 기본 정보
+            # Basic information
             summary_data = {
                 'id': split.id,
                 'name': split.name,
@@ -352,7 +382,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                 'assignment_count': split.assignments.count()
             }
             
-            # 영수증 정보가 있는 경우
+            # If receipt information exists
             if split.receipt:
                 summary_data.update({
                     'receipt_id': split.receipt.id,
@@ -374,7 +404,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def receipt_items(self, request, pk=None):
         """
-        스플릿에 연결된 영수증의 아이템들을 조회합니다.
+        Get items from the receipt linked to a split.
         """
         split = self.get_object()
         
@@ -388,7 +418,7 @@ class SplitViewSet(viewsets.ModelViewSet):
             from apps.scan.models import ReceiptItem
             items = ReceiptItem.objects.filter(receipt=split.receipt)
             
-            # 할당 정보와 함께 반환
+            # Return with assignment information
             items_data = []
             for item in items:
                 item_data = {
@@ -402,7 +432,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                     'assigned_participants': []
                 }
                 
-                # 할당된 참여자들 확인
+                # Check assigned participants
                 assignment = ItemAssignment.objects.filter(
                     split=split,
                     receipt_item=item
@@ -432,7 +462,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def assign_items(self, request, pk=None):
         """
-        아이템들을 참여자들에게 할당합니다.
+        Assign items to participants.
         """
         split = self.get_object()
         assignments_data = request.data.get('assignments', [])
@@ -455,17 +485,17 @@ class SplitViewSet(viewsets.ModelViewSet):
                 continue
             
             try:
-                # ReceiptItem 확인
+                # Verify ReceiptItem
                 from apps.scan.models import ReceiptItem
                 receipt_item = ReceiptItem.objects.get(id=receipt_item_id)
                 
-                # 기존 할당이 있으면 업데이트, 없으면 생성
+                # Update existing assignment or create new one
                 assignment, created = ItemAssignment.objects.get_or_create(
                     split=split,
                     receipt_item=receipt_item
                 )
                 
-                # 참여자들 추가
+                # Add participants
                 participants = SplitParticipant.objects.filter(
                     split=split,
                     email__in=participant_emails
@@ -494,7 +524,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def assignments(self, request, pk=None):
         """
-        스플릿의 아이템 할당 정보를 조회합니다.
+        Get item assignment information for a split.
         """
         split = self.get_object()
         assignments = split.assignments.all()
@@ -504,7 +534,7 @@ class SplitViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['put'])
     def update_assignment(self, request, pk=None):
         """
-        특정 아이템의 할당을 업데이트합니다.
+        Update assignment for a specific item.
         """
         split = self.get_object()
         receipt_item_id = request.data.get('receipt_item_id')
@@ -522,7 +552,7 @@ class SplitViewSet(viewsets.ModelViewSet):
                 receipt_item_id=receipt_item_id
             )
             
-            # 참여자들 업데이트
+            # Update participants
             participants = SplitParticipant.objects.filter(
                 split=split,
                 email__in=participant_emails

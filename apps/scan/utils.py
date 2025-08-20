@@ -7,21 +7,21 @@ from django.conf import settings
 
 def parse_receipt_text(image_url: str):
     """
-    영수증 이미지를 파싱하여 구조화된 데이터를 반환합니다.
+    Parse receipt image and return structured data.
     
     Args:
-        image_url (str): 영수증 이미지 URL
+        image_url (str): Receipt image URL
         
     Returns:
-        dict: 파싱된 영수증 데이터
+        dict: Parsed receipt data
     """
     try:
-        # API 클라이언트 초기화
+        # Initialize API client
         client = Client("valenynl/ReceiptSplitAI")
         
-        # API 호출
+        # API call
         try:
-            # API 호출
+            # API call
             result = client.predict(
                 input_image=handle_file(image_url),
                 model_name="gemini-1.5-flash",
@@ -98,120 +98,69 @@ Output Format: Return the output as a JSON object with the following structure:
             print(f"API error details: {str(api_error)}")
             raise
             
-        # 결과가 튜플인 경우 두 번째 요소(JSON 문자열) 사용
-        if isinstance(result, tuple) and len(result) > 1:
-            result = result[1]
-            
-        # JSON 파싱
+        # JSON parsing
+        if isinstance(result, str):
+            try:
+                parsed_data = json.loads(result)
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                print(f"Raw result: {result}")
+                raise Exception("Failed to parse API response as JSON")
+        else:
+            parsed_data = result
+        
+        # Validate required fields
+        required_fields = ['store_name', 'datetime', 'currency', 'sub_total_amount', 'total_price', 'items']
+        missing_fields = [field for field in required_fields if field not in parsed_data]
+        
+        if missing_fields:
+            raise Exception(f"Missing required fields: {missing_fields}")
+        
+        # Date parsing
         try:
-            parsed_data = json.loads(result)
-            
-            # 메타데이터 필드 제거
-            metadata_fields = ['input_tokens', 'output_tokens', 'total_tokens', 'time', 'file_name']
-            for field in metadata_fields:
-                if field in parsed_data:
-                    del parsed_data[field]
-            
-            # 필수 필드 확인 및 기본값 설정
-            required_fields = {
-                'store_name': '',
-                'country': 'unknown',
-                'receipt_type': 'unknown',
-                'address': 'unknown',
-                'datetime': timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'currency': 'USD',
-                'sub_total_amount': 0,
-                'total_price': 0,
-                'total_discount': 0,
-                'all_items_price_with_tax': False,
-                'payment_method': 'unknown',
-                'rounding': 0,
-                'tax': 0,
-                'taxes_not_included_sum': 0,
-                'tips': 0,
-                'items': [],
-                'taxs_items': []
-            }
-            
-            # 누락된 필드에 기본값 설정
-            for field, default_value in required_fields.items():
-                if field not in parsed_data:
-                    parsed_data[field] = default_value
-            
-            # 날짜 형식 변환
-            if 'datetime' in parsed_data and parsed_data['datetime']:
-                try:
-                    # YYYY.MM.DD HH:MM:SS 형식을 datetime 객체로 변환
-                    dt = datetime.strptime(parsed_data['datetime'], '%Y.%m.%d %H:%M:%S')
-                    # timezone 적용
-                    dt = timezone.make_aware(dt)
-                    # Django 형식(YYYY-MM-DD HH:MM:SS)으로 변환
-                    parsed_data['datetime'] = dt.strftime('%Y-%m-%d %H:%M:%S')
-                except ValueError as e:
-                    print(f"Date parsing error: {e}")
-                    print(f"Original datetime: {parsed_data['datetime']}")
-                    # 날짜 파싱 실패 시 현재 시간 사용
-                    parsed_data['datetime'] = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                # datetime이 없는 경우 현재 시간 사용
-                parsed_data['datetime'] = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Boolean 필드 처리
-            parsed_data['all_items_price_with_tax'] = bool(parsed_data.get('all_items_price_with_tax', False))
-            
-            # items의 item_price_with_tax 필드 처리
-            for item in parsed_data.get('items', []):
-                item['item_price_with_tax'] = bool(item.get('item_price_with_tax', False))
-            
-            # taxs_items의 tax_included 필드 처리
-            for tax_item in parsed_data.get('taxs_items', []):
-                tax_item['tax_included'] = bool(tax_item.get('tax_included', False))
+            if isinstance(parsed_data['datetime'], str):
+                # Try to parse the datetime string
+                datetime_str = parsed_data['datetime']
                 
-        except json.JSONDecodeError as json_error:
-            print(f"Error parsing JSON: {result}")
-            print(f"JSON error details: {json_error}")
-            return {
-                'store_name': '',
-                'country': 'unknown',
-                'receipt_type': 'unknown',
-                'address': 'unknown',
-                'datetime': timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'currency': 'USD',
-                'sub_total_amount': 0,
-                'total_price': 0,
-                'total_discount': 0,
-                'all_items_price_with_tax': False,
-                'payment_method': 'unknown',
-                'rounding': 0,
-                'tax': 0,
-                'taxes_not_included_sum': 0,
-                'tips': 0,
-                'items': [],
-                'taxs_items': []
-            }
-            
+                # Handle different date formats
+                date_formats = [
+                    "%Y.%m.%d %H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y/%m/%d %H:%M:%S",
+                    "%m/%d/%Y %H:%M:%S",
+                    "%d/%m/%Y %H:%M:%S",
+                    "%Y.%m.%d",
+                    "%Y-%m-%d",
+                    "%Y/%m/%d",
+                    "%m/%d/%Y",
+                    "%d/%m/%Y"
+                ]
+                
+                parsed_datetime = None
+                for fmt in date_formats:
+                    try:
+                        if len(datetime_str) <= 10:  # Date only
+                            parsed_datetime = datetime.strptime(datetime_str, fmt)
+                            # Set default time if not provided
+                            parsed_datetime = parsed_datetime.replace(hour=12, minute=0, second=0)
+                        else:  # Date and time
+                            parsed_datetime = datetime.strptime(datetime_str, fmt)
+                        break
+                    except ValueError:
+                        continue
+                
+                if parsed_datetime:
+                    parsed_data['datetime'] = parsed_datetime
+                else:
+                    # Use current time if parsing fails
+                    parsed_data['datetime'] = timezone.now()
+                    
+        except Exception as e:
+            # Use current time if date parsing fails
+            parsed_data['datetime'] = timezone.now()
+        
         return parsed_data
         
     except Exception as e:
-        print(f"Error processing image: {e}")
-        print(f"Error type: {type(e)}")
-        print(f"Error details: {str(e)}")
-        return {
-            'store_name': '',
-            'country': 'unknown',
-            'receipt_type': 'unknown',
-            'address': 'unknown',
-            'datetime': timezone.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'currency': 'USD',
-            'sub_total_amount': 0,
-            'total_price': 0,
-            'total_discount': 0,
-            'all_items_price_with_tax': False,
-            'payment_method': 'unknown',
-            'rounding': 0,
-            'tax': 0,
-            'taxes_not_included_sum': 0,
-            'tips': 0,
-            'items': [],
-            'taxs_items': []
-        }
+        print(f"Error in parse_receipt_text: {str(e)}")
+        raise Exception(f"Failed to parse receipt: {str(e)}")

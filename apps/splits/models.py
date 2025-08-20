@@ -26,11 +26,17 @@ class Split(models.Model):
     
     def __str__(self):
         return self.name
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-date_created']),  # Most commonly used query
+            models.Index(fields=['user', 'status', '-date_created']),  # Filtering query
+        ]
 
 
 class SplitParticipant(models.Model):
     """
-    스플릿에 참여하는 사람들을 관리하는 모델
+    Model for managing participants in a split
     """
     split = models.ForeignKey(Split, on_delete=models.CASCADE, related_name='participants')
     email = models.EmailField()
@@ -48,7 +54,7 @@ class SplitParticipant(models.Model):
 
 class ItemAssignment(models.Model):
     """
-    스플릿의 아이템들을 참여자들에게 할당하는 모델
+    Model for assigning items in a split to participants
     """
     split = models.ForeignKey(Split, on_delete=models.CASCADE, related_name='assignments')
     receipt_item = models.ForeignKey('scan.ReceiptItem', on_delete=models.CASCADE, related_name='assignments')

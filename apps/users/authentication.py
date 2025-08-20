@@ -25,7 +25,7 @@ class SupabaseAuthentication(authentication.BaseAuthentication):
         token = auth_header.split(' ')[1]
         
         try:
-            # Supabase 클라이언트를 사용하여 토큰 검증
+            # Use Supabase client to verify token
             user = supabase.auth.get_user(token)
             
             from django.contrib.auth.models import User
@@ -39,7 +39,7 @@ class SupabaseAuthentication(authentication.BaseAuthentication):
                 }
             )
             
-            # Profile이 없으면 생성
+            # Create Profile if it doesn't exist
             if not hasattr(django_user, 'profile'):
                 Profile.objects.create(
                     user=django_user,
